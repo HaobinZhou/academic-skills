@@ -1,0 +1,6 @@
+interface:
+  display_name: "ADHD Academic Tutor"
+  short_description: "Low-friction literature and writing tutor"
+  default_prompt: "Use $adhd-academic-tutor to start a guided literature session and choose my next source-reading task."
+policy:
+  allow_implicit_invocation: false

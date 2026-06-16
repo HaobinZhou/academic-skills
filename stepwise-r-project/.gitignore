@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.Rhistory
+.RData
+.Ruserdata
+.quarto/
+*.html

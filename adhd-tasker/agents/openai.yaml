@@ -1,0 +1,7 @@
+interface:
+  display_name: "ADHD Tasker"
+  short_description: "ADHD-friendly task breakdown and adjustment"
+  default_prompt: "Use $adhd-tasker to break this task into ADHD-friendly micro-steps with generous time boxes."
+
+policy:
+  allow_implicit_invocation: false

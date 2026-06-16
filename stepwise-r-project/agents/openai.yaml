@@ -1,0 +1,4 @@
+interface:
+  display_name: "Stepwise R Project"
+  short_description: "Readable R projects with Memory logs"
+  default_prompt: "Use $stepwise-r-project to initialize and maintain this R analysis workspace."
