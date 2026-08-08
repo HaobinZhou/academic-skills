@@ -10,7 +10,7 @@ These skills are not demo artifacts. They are used in real research and learning
 
 | Skill | Description |
 | --- | --- |
-| `stepwise-r-project` | Maintains readable R analysis projects with standard folders, Memory logs, RStudio-style script structure, and function-level R Markdown audits. |
+| `stepwise-r-project` | Maintains lean, readable R projects with canonical scientific definitions, publication-facing Results, current-only run audits, conditional semantic Memory, and high-risk function audits. |
 
 ### Literature Learning and Academic Writing
 
@@ -38,7 +38,7 @@ These skills are not demo artifacts. They are used in real research and learning
 
 | Skill | 说明 |
 | --- | --- |
-| `stepwise-r-project` | 维护可读的 R 分析项目，包括标准目录、Memory 记录、RStudio 风格脚本结构，以及 function 级 R Markdown 审计。 |
+| `stepwise-r-project` | 维护精简、可读的 R 分析项目：每项科学定义只有一个当前事实源，Results 仅保留面向发表或正式审阅的产物，运行审计只保留当前版本，Memory 按语义变动触发，Function Audit 仅覆盖高风险函数。 |
 
 ### 文献学习与学术写作
 
