@@ -1,0 +1,7 @@
+interface:
+  display_name: "Project Crystallizer"
+  short_description: "Freeze or hand off a useful project burst"
+  default_prompt: "Use $project-crystallizer to turn this project's current burst into a durable handoff or freeze point."
+
+policy:
+  allow_implicit_invocation: false
