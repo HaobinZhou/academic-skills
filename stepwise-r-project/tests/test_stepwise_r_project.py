@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import importlib.util
 import io
+import json
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest import mock
 
 
 SCRIPT_PATH = Path(__file__).parents[1] / "scripts" / "stepwise_r_project.py"
@@ -56,17 +61,212 @@ class StepwiseProjectTestCase(unittest.TestCase):
             replace=False,
         )
 
-    def complete_memory(self, path: Path) -> None:
-        content = path.read_text(encoding="utf-8")
-        content = content.replace(
-            "- Change:", "- Change: Updated the registered contract."
+    def memory_payload(self, title: str = "Revise cohort strategy", **changes: object) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "title": title,
+            "related_topics": [],
+            "supersedes": [],
+            "invalidates": [],
+            "before": "The analysis used the earlier strategy.",
+            "trigger": "Diagnostics showed that the earlier assumption was unsafe.",
+            "decision": "Use the revised strategy for the current analysis.",
+            "scientific_or_technical_rationale": "The revision aligns the estimand with observed data support.",
+            "basis": "Empirical diagnostic finding in Audit/Runs/model/current/diagnostics.csv.",
+            "rejected_or_prior_approach": "Retain the earlier unsupported assumption.",
+            "consequence": "Future analyses must use the revised strategy.",
+        }
+        payload.update(changes)
+        return payload
+
+    def attention_payload(self, *, blocking: bool = True, title: str = "Unresolved time zero") -> dict[str, object]:
+        return {
+            "title": title,
+            "blocking": blocking,
+            "observation": "Two scripts assign different cohort entry dates.",
+            "evidence": "R/cohort.R uses enrollment_date; R/model.R uses index_date.",
+            "why_it_matters": "Follow-up and event attribution may change.",
+            "why_no_action_was_taken": "Choosing the scientific time zero is outside the current task.",
+            "human_decision_needed": "Confirm the authoritative time-zero definition.",
+        }
+
+    def legacy_memory_text(
+        self,
+        task_key: str,
+        *,
+        topic: str = "cohort-contract",
+        canonical_path: str = "docs/cohort.md",
+    ) -> str:
+        return f"""---
+task_key: {json.dumps(task_key)}
+canonical_topic: {json.dumps(topic)}
+canonical_path: {json.dumps(canonical_path)}
+---
+
+# {task_key}
+
+## Change And Reason
+
+- Change: The analysis design changed after scientific review.
+- Why: Diagnostics or collaborator input showed the prior approach was unsuitable.
+
+## Verification
+
+- Verification: The registered contract test passed before migration.
+
+## Open Risks
+
+- Risk: A material question may still require human review.
+"""
+
+    def make_v2_project(
+        self,
+        root: Path,
+        *,
+        aliases: tuple[str, str, str, str] = ("R", "Data", "Results", "Audit"),
+        memory_keys: tuple[str, ...] = (),
+        realistic: bool = False,
+    ) -> Path:
+        root = root.resolve()
+        r_name, data_name, results_name, audit_name = aliases
+        for dirname in aliases:
+            (root / dirname).mkdir(parents=True, exist_ok=True)
+        stepwise.ensure_v3_project(root, create=True)
+
+        def write(relative: str, content: str) -> Path:
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+            return path
+
+        write(f"{r_name}/analysis.R", "# Existing analysis\nx <- 1\n")
+        write(
+            "docs/cohort.md",
+            "# Cohort Contract\n\nStatus: frozen\n\nCurrent cohort definition.\n",
         )
-        content = content.replace("- Why:", "- Why: The scientific definition changed.")
-        content = content.replace(
-            "- Verification:", "- Verification: Contract test passed."
+        write("tests/cohort_contract.R", "stopifnot(TRUE)\n")
+        stepwise.register_canonical(
+            root,
+            "cohort-contract",
+            "docs/cohort.md",
+            None,
+            "tests/cohort_contract.R",
+            replace=False,
         )
-        content = content.replace("- Risk:", "- Risk: No known remaining risk.")
-        path.write_text(content, encoding="utf-8")
+        if realistic:
+            write(
+                "docs/outcome.md",
+                "# Outcome Contract\n\nStatus: frozen\n\nCurrent outcome definition.\n",
+            )
+            write("tests/outcome_contract.R", "stopifnot(TRUE)\n")
+            stepwise.register_canonical(
+                root,
+                "outcome-contract",
+                "docs/outcome.md",
+                None,
+                "tests/outcome_contract.R",
+                replace=False,
+            )
+            write(f"{data_name}/source.csv", "id,value\n1,10\n")
+            write(f"{results_name}/table1.csv", "term,value\nage,50\n")
+            stepwise.register_result(
+                root,
+                "table1",
+                f"{results_name}/table1.csv",
+                "table",
+                "publication",
+                f"{r_name}/analysis.R",
+                replace=False,
+            )
+            source = write(
+                f"{r_name}/eligibility.R",
+                "#' Derive eligibility\n#' @param x Logical vector\n"
+                "derive_eligibility <- function(x) { x }\n",
+            )
+            function_dir = root / audit_name / "Functions"
+            function_dir.mkdir(parents=True)
+            write(
+                f"{audit_name}/Functions/audit_derive_eligibility.Rmd",
+                f"""---
+title: "Function Audit: derive_eligibility()"
+stepwise_function: "derive_eligibility"
+source: "{r_name}/eligibility.R"
+source_sha256: "{stepwise.file_sha256(source)}"
+risk_reason: "Eligibility errors alter the cohort"
+---
+
+# Function Audit: `derive_eligibility()`
+
+## Purpose And Risk
+
+Derive cohort eligibility under the registered contract.
+
+## Input And Output Contract
+
+Accept and return a logical vector without side effects.
+
+## Edge Cases And Contract Tests
+
+Covered by `tests/cohort_contract.R`.
+
+## Known Limits
+
+Inputs must already be logical.
+""",
+            )
+            write(
+                f"{audit_name}/Runs/model/current/evidence.json",
+                '{"status":"pass"}\n',
+            )
+        stepwise.refresh_index(root)
+        shutil.rmtree(root / "Memory")
+        shutil.rmtree(root / "Attention")
+        project_file = root / "project.md"
+        text = project_file.read_text(encoding="utf-8")
+        navigation = (
+            f"## Managed Navigation\n\n{stepwise.NAVIGATION_START}\n"
+            f"{stepwise.managed_navigation_table()}\n"
+            f"{stepwise.NAVIGATION_END}\n\n"
+        )
+        text = text.replace(stepwise.SCHEMA_MARKER, stepwise.V2_SCHEMA_MARKER)
+        text = text.replace(navigation, "")
+        project_file.write_text(text, encoding="utf-8")
+        if memory_keys:
+            memory_dir = root / "Memory"
+            memory_dir.mkdir()
+            for key in memory_keys:
+                (memory_dir / f"{key}.md").write_text(
+                    self.legacy_memory_text(key), encoding="utf-8"
+                )
+        report = stepwise.validate_v2_project(root)
+        self.assertFalse(report.errors, report.errors)
+        return root
+
+    def initialize_git(self, root: Path) -> None:
+        commands = (
+            ("git", "init", "-q"),
+            ("git", "config", "user.email", "stepwise@example.test"),
+            ("git", "config", "user.name", "Stepwise Test"),
+            ("git", "add", "."),
+            ("git", "-c", "commit.gpgsign=false", "commit", "-qm", "v2 baseline"),
+        )
+        for command in commands:
+            subprocess.run(command, cwd=root, check=True, capture_output=True)
+
+    def migration_record(
+        self,
+        path: str,
+        *,
+        decisions: list[dict[str, object]] | None = None,
+        attention: list[dict[str, object]] | None = None,
+    ) -> dict[str, object]:
+        decision_entries = decisions or []
+        attention_entries = attention or []
+        return {
+            "path": path,
+            "decision_memories": decision_entries,
+            "attention_entries": attention_entries,
+            "no_migration_required": not decision_entries and not attention_entries,
+        }
 
     def test_init_and_index_are_idempotent(self) -> None:
         before = (self.root / "project.md").read_text(encoding="utf-8")
@@ -171,22 +371,10 @@ class StepwiseProjectTestCase(unittest.TestCase):
                 "--producer",
                 "R/01_table.R",
             ),
-            (
-                "memory",
-                str(self.root),
-                "--task-key",
-                "cohort-contract-change",
-                "--summary",
-                "Revise cohort contract",
-                "--canonical-topic",
-                "cohort-contract",
-            ),
             ("index", str(self.root)),
         )
         for command in first_commands:
             self.assertEqual(self.invoke(*command), 0)
-        memory = self.root / "Memory" / "cohort-contract-change.md"
-        self.complete_memory(memory)
         before_text = (self.root / "project.md").read_text(encoding="utf-8")
         before_files = sorted(
             path.relative_to(self.root)
@@ -303,7 +491,7 @@ class StepwiseProjectTestCase(unittest.TestCase):
             self.assertEqual(script.read_text(encoding="utf-8"), original)
             self.assertTrue((root / "project.md").exists())
             self.assertEqual(
-                {"Audit", "Data", "R", "Results"},
+                {"Attention", "Audit", "Data", "Memory", "R", "Results"},
                 {path.name for path in root.iterdir() if path.is_dir()},
             )
 
@@ -490,131 +678,137 @@ pass
         self.assertTrue(any("unresolved language" in error for error in report.errors))
         self.assertFalse(any("execution status" in error for error in report.errors))
 
-    def test_memory_reuses_one_stable_file_per_task_key(self) -> None:
-        self.register_protocol()
-        first, first_action = stepwise.create_or_reuse_memory(
+    def test_attention_creation_resolution_blocking_and_index(self) -> None:
+        first = stepwise.add_attention(self.root, self.attention_payload(blocking=True))
+        second = stepwise.add_attention(
             self.root,
-            "cohort-contract-change",
-            "Revise cohort contract",
-            "cohort-contract",
+            self.attention_payload(blocking=False, title="Unresolved provenance label"),
         )
-        original = first.read_text(encoding="utf-8")
-        second, second_action = stepwise.create_or_reuse_memory(
-            self.root,
-            "cohort-contract-change",
-            "A different summary must not overwrite the record",
-            "cohort-contract",
-        )
-        self.assertEqual(first_action, "CREATED_DRAFT")
-        self.assertEqual(second_action, "REUSED")
-        self.assertEqual(first, second)
-        self.assertEqual(original, second.read_text(encoding="utf-8"))
-        self.assertEqual(len(list((self.root / "Memory").glob("*.md"))), 1)
-        self.assertIn("](<../docs/protocol.md>)", original)
-
-        self.complete_memory(first)
+        self.assertEqual(first.name, "A-0001.md")
+        self.assertEqual(second.name, "A-0002.md")
+        index = (self.root / "Attention/index.md").read_text(encoding="utf-8")
+        self.assertIn("| A-0001 | true |", index)
+        self.assertIn("| A-0002 | false |", index)
+        resolved = stepwise.resolve_attention(self.root, "A-0001")
+        self.assertFalse(resolved.exists())
+        self.assertNotIn("A-0001", (self.root / "Attention/index.md").read_text(encoding="utf-8"))
         report = stepwise.validate_project(self.root)
         self.assertTrue(report.ok, report.errors)
 
-    def test_memory_adopts_alias_and_distinct_tasks_create_distinct_files(self) -> None:
-        self.register_protocol()
-        (self.root / "memory").mkdir()
-        first, _ = stepwise.create_or_reuse_memory(
-            self.root,
-            "cohort-definition",
-            "Revise cohort definition",
-            "cohort-contract",
-        )
-        second, _ = stepwise.create_or_reuse_memory(
-            self.root,
-            "outcome-definition",
-            "Revise outcome definition",
-            "cohort-contract",
-        )
-        directory_names = {path.name for path in self.root.iterdir() if path.is_dir()}
-        self.assertEqual(first.parent.name, "memory")
-        self.assertEqual(second.parent.name, "memory")
-        self.assertNotIn("Memory", directory_names)
-        self.assertEqual(len(list((self.root / "memory").glob("*.md"))), 2)
+    def test_attention_rejects_invalid_schema_duplicate_and_topology(self) -> None:
+        payload = self.attention_payload()
+        stepwise.add_attention(self.root, payload)
+        with self.assertRaisesRegex(stepwise.ProjectError, "Equivalent active"):
+            stepwise.add_attention(self.root, payload)
+        invalid = dict(payload)
+        invalid["blocking"] = "yes"
+        with self.assertRaisesRegex(stepwise.ProjectError, "true or false"):
+            stepwise.add_attention(self.root, invalid)
+        self.write("Attention/resolved/A-9999.md", "legacy\n")
+        report = stepwise.validate_project(self.root)
+        self.assertTrue(any("Unexpected Attention paths" in error for error in report.errors))
 
-    def test_memory_requires_registered_canonical_topic(self) -> None:
-        with self.assertRaisesRegex(stepwise.ProjectError, "not registered"):
-            stepwise.create_or_reuse_memory(
+    def test_memory_add_allows_empty_topics_and_generates_index(self) -> None:
+        memory = stepwise.add_decision_memory(self.root, self.memory_payload())
+        self.assertEqual(memory.name, "M-0001.md")
+        values = stepwise.parse_managed_entry(
+            memory, stepwise.MEMORY_FIELDS, "Decision Memory entry"
+        )
+        self.assertEqual(values["Status"], "active")
+        self.assertEqual(values["Related Topics"], "[]")
+        self.assertIn("M-0001", (self.root / "Memory/index.md").read_text(encoding="utf-8"))
+        report = stepwise.validate_project(self.root)
+        self.assertTrue(report.ok, report.errors)
+
+    def test_memory_supersedes_and_invalidates_with_reverse_links(self) -> None:
+        first = stepwise.add_decision_memory(self.root, self.memory_payload("First decision"))
+        second = stepwise.add_decision_memory(
+            self.root,
+            self.memory_payload("Second decision", supersedes=["M-0001"]),
+        )
+        third = stepwise.add_decision_memory(
+            self.root,
+            self.memory_payload("Third decision"),
+        )
+        fourth = stepwise.add_decision_memory(
+            self.root,
+            self.memory_payload("Fourth decision", invalidates=["M-0003"]),
+        )
+        first_values = stepwise.parse_managed_entry(first, stepwise.MEMORY_FIELDS, "memory")
+        third_values = stepwise.parse_managed_entry(third, stepwise.MEMORY_FIELDS, "memory")
+        self.assertEqual(first_values["Status"], "superseded")
+        self.assertEqual(first_values["Superseded By"], '["M-0002"]')
+        self.assertEqual(third_values["Status"], "invalidated")
+        self.assertEqual(third_values["Invalidated By"], '["M-0004"]')
+        self.assertEqual(second.name, "M-0002.md")
+        self.assertEqual(fourth.name, "M-0004.md")
+        report = stepwise.validate_project(self.root)
+        self.assertTrue(report.ok, report.errors)
+
+    def test_memory_rejects_invalid_reference_schema_and_topology(self) -> None:
+        with self.assertRaisesRegex(stepwise.ProjectError, "do not exist"):
+            stepwise.add_decision_memory(
                 self.root,
-                "unowned-change",
-                "Change without an owner",
-                "missing-topic",
+                self.memory_payload(supersedes=["M-9999"]),
             )
+        invalid = self.memory_payload()
+        invalid.pop("basis")
+        with self.assertRaisesRegex(stepwise.ProjectError, "missing fields: basis"):
+            stepwise.add_decision_memory(self.root, invalid)
+        self.write("Memory/archive/M-0001.md", "legacy\n")
+        report = stepwise.validate_project(self.root)
+        self.assertTrue(any("Unexpected Memory paths" in error for error in report.errors))
 
-    def test_legacy_memory_interface_has_clear_error(self) -> None:
-        with self.assertRaisesRegex(stepwise.ProjectError, "--magnitude was removed"):
-            stepwise.main(
-                [
-                    "memory",
-                    str(self.root),
-                    "--magnitude",
-                    "huge",
-                    "--summary",
-                    "legacy call",
-                ]
+    def test_concurrent_memory_and_attention_id_allocation_is_safe(self) -> None:
+        operations = []
+        for number in range(8):
+            operations.append(
+                lambda number=number: stepwise.add_decision_memory(
+                    self.root, self.memory_payload(f"Decision {number}")
+                )
             )
-
-        with self.assertRaisesRegex(stepwise.ProjectError, "--magnitude was removed"):
-            stepwise.main(["memory", str(self.root), "--magnitude", "mini"])
-
-    def test_legacy_memory_filenames_fail_validation(self) -> None:
-        self.write("Memory/20260802_huge_old-pattern.md", "# Legacy\n")
-        report = stepwise.validate_project(self.root)
-        self.assertTrue(any("legacy per-change" in error for error in report.errors))
-
-    def test_nested_duplicate_memory_task_key_fails_validation(self) -> None:
-        self.register_protocol()
-        memory, _ = stepwise.create_or_reuse_memory(
-            self.root,
-            "cohort-contract-change",
-            "Revise cohort contract",
-            "cohort-contract",
-        )
-        self.complete_memory(memory)
-        duplicate = self.write(
-            "Memory/archive/duplicate.md",
-            memory.read_text(encoding="utf-8"),
-        )
-        self.assertTrue(duplicate.exists())
-        report = stepwise.validate_project(self.root)
-        self.assertTrue(
-            any("Duplicate Memory task_key" in error for error in report.errors)
-        )
-        self.assertTrue(
-            any("stable Memory/<task-key>.md" in error for error in report.errors)
-        )
-
-    def test_memory_without_required_body_fails_validation(self) -> None:
-        self.register_protocol()
-        memory, _ = stepwise.create_or_reuse_memory(
-            self.root,
-            "cohort-contract-change",
-            "Revise cohort contract",
-            "cohort-contract",
-        )
-        memory.write_text(
-            """---
-task_key: "cohort-contract-change"
-canonical_topic: "cohort-contract"
-canonical_path: "docs/protocol.md"
----
-
-Canonical source: [cohort-contract](<../docs/protocol.md>)
-""",
-            encoding="utf-8",
-        )
-        report = stepwise.validate_project(self.root)
-        self.assertTrue(
-            any(
-                "requires exactly one 'Verification' section" in error
-                for error in report.errors
+            operations.append(
+                lambda number=number: stepwise.add_attention(
+                    self.root,
+                    self.attention_payload(
+                        blocking=bool(number % 2), title=f"Attention {number}"
+                    ),
+                )
             )
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            paths = [future.result() for future in [executor.submit(op) for op in operations]]
+        self.assertEqual(len({path.name for path in paths if path.name.startswith("M-")}), 8)
+        self.assertEqual(len({path.name for path in paths if path.name.startswith("A-")}), 8)
+        report = stepwise.validate_project(self.root)
+        self.assertTrue(report.ok, report.errors)
+
+    def test_managed_system_cli_uses_structured_payloads_end_to_end(self) -> None:
+        memory_input = self.write(
+            "memory-input.json", json.dumps(self.memory_payload())
         )
+        attention_input = self.write(
+            "attention-input.json", json.dumps(self.attention_payload())
+        )
+        self.assertEqual(
+            self.invoke(
+                "memory", "add", str(self.root), "--input", str(memory_input)
+            ),
+            0,
+        )
+        self.assertEqual(
+            self.invoke(
+                "attention", "raise", str(self.root), "--input", str(attention_input)
+            ),
+            0,
+        )
+        self.assertEqual(
+            self.invoke("attention", "resolve", str(self.root), "--id", "A-0001"),
+            0,
+        )
+        self.assertTrue((self.root / "Memory/entries/M-0001.md").exists())
+        self.assertFalse((self.root / "Attention/entries/A-0001.md").exists())
+        self.assertEqual(self.invoke("index", str(self.root)), 0)
+        self.assertEqual(self.invoke("validate", str(self.root)), 0)
 
     def test_result_registration_and_validation(self) -> None:
         self.write("R/01_table.R", "# Build current Table 1\n")
@@ -954,23 +1148,829 @@ Canonical source: [cohort-contract](<../docs/protocol.md>)
         self.write("Results/unregistered.csv", "x\n1\n")
         self.assertEqual(self.invoke("validate", str(self.root)), 1)
 
-    def test_legacy_project_is_reported_but_not_migrated(self) -> None:
+    def test_project_detection_distinguishes_v2_v3_unmanaged_and_damaged(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir) / "legacy"
-            for dirname in ("R", "Data", "Results", "Audit"):
-                (root / dirname).mkdir(parents=True, exist_ok=True)
-            project_file = root / "project.md"
-            project_file.write_text(
-                "# Project\n\n## R Script Index\n", encoding="utf-8"
+            base = Path(temp_dir).resolve()
+            v2 = self.make_v2_project(base / "v2")
+            self.assertEqual(stepwise.detect_project_state(v2), stepwise.MIGRATION_REQUIRED)
+            v2_report = stepwise.validate_project(v2)
+            self.assertEqual(v2_report.state, stepwise.MIGRATION_REQUIRED)
+            self.assertFalse(v2_report.errors)
+
+            v3 = base / "v3"
+            stepwise.ensure_v3_project(v3, create=True)
+            stepwise.refresh_index(v3)
+            self.assertEqual(stepwise.detect_project_state(v3), stepwise.PROJECT_V3)
+            self.assertTrue(stepwise.validate_project(v3).ok)
+
+            unmanaged = base / "unmanaged"
+            unmanaged.mkdir()
+            (unmanaged / "project.md").write_text("# Project\n", encoding="utf-8")
+            self.assertEqual(
+                stepwise.detect_project_state(unmanaged), stepwise.PROJECT_UNMANAGED
             )
-            original = project_file.read_text(encoding="utf-8")
-            with self.assertRaisesRegex(
-                stepwise.ProjectError, "not Stepwise R Project v2"
+            self.assertEqual(
+                stepwise.validate_project(unmanaged).state, stepwise.PROJECT_UNMANAGED
+            )
+
+            damaged = self.make_v2_project(base / "damaged")
+            project_file = damaged / "project.md"
+            project_file.write_text(
+                project_file.read_text(encoding="utf-8")
+                + f"\n{stepwise.SCHEMA_MARKER}\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                stepwise.detect_project_state(damaged), stepwise.PROJECT_DAMAGED
+            )
+            self.assertTrue(stepwise.migration_preflight(damaged)["structural_blockers"])
+
+    def test_init_refuses_v2_without_partial_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = self.make_v2_project(Path(temp_dir) / "v2", memory_keys=("history",))
+            before = {
+                path.relative_to(root).as_posix(): path.read_bytes()
+                for path in root.rglob("*")
+                if path.is_file()
+            }
+            with self.assertRaisesRegex(stepwise.ProjectError, "migrate --check"):
+                stepwise.ensure_v3_project(root, create=True)
+            after = {
+                path.relative_to(root).as_posix(): path.read_bytes()
+                for path in root.rglob("*")
+                if path.is_file()
+            }
+            self.assertEqual(before, after)
+            self.assertFalse((root / "Attention").exists())
+
+    def test_migration_preflight_is_read_only_and_inventory_is_deterministic(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = self.make_v2_project(
+                Path(temp_dir) / "v2",
+                aliases=("r", "data", "output", "audit"),
+                memory_keys=("decision", "routine"),
+                realistic=True,
+            )
+            before = {
+                path.relative_to(root).as_posix(): path.read_bytes()
+                for path in root.rglob("*")
+                if path.is_file()
+            }
+            first = stepwise.migration_preflight(root)
+            second = stepwise.migration_preflight(root)
+            after = {
+                path.relative_to(root).as_posix(): path.read_bytes()
+                for path in root.rglob("*")
+                if path.is_file()
+            }
+            self.assertEqual(first, second)
+            self.assertEqual(before, after)
+            self.assertEqual(first["state"], stepwise.MIGRATION_REQUIRED)
+            self.assertEqual(first["roles"]["R"], "r")
+            self.assertEqual(first["roles"]["Results"], "output")
+            self.assertEqual(first["canonical_registrations"], 2)
+            self.assertEqual(first["result_registrations"], 1)
+            self.assertEqual(first["function_audits"], 1)
+            self.assertEqual(first["audit_run_stages"], ["model"])
+            self.assertEqual(
+                first["legacy_memory_files"],
+                ["Memory/decision.md", "Memory/routine.md"],
+            )
+            self.assertFalse(first["structural_blockers"])
+            self.assertFalse(first["git"]["repository"])
+
+    def test_migration_preflight_allows_unrelated_dirty_git_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = self.make_v2_project(Path(temp_dir) / "v2", realistic=True)
+            self.initialize_git(root)
+            clean = stepwise.migration_preflight(root)
+            self.assertTrue(clean["git"]["repository"])
+            self.assertTrue(clean["git"]["clean"])
+            self.assertFalse(clean["structural_blockers"])
+            (root / "R/analysis.R").write_text("# Ongoing analysis\nx <- 2\n", encoding="utf-8")
+            (root / "Results/table1.csv").write_text("term,value\nage,51\n", encoding="utf-8")
+            (root / "untracked.txt").write_text("draft\n", encoding="utf-8")
+            dirty = stepwise.migration_preflight(root)
+            self.assertFalse(dirty["git"]["clean"])
+            self.assertEqual(dirty["state"], stepwise.MIGRATION_REQUIRED)
+            self.assertFalse(dirty["structural_blockers"])
+            self.assertFalse(dirty["recoverable_blockers"])
+            self.assertEqual(
+                dirty["unrelated_dirty_paths"],
+                ["R/analysis.R", "Results/table1.csv", "untracked.txt"],
+            )
+
+    def test_preflight_staging_estimate_ignores_sparse_scientific_data_size(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = self.make_v2_project(
+                Path(temp_dir) / "v2", memory_keys=("design",), realistic=True
+            )
+            huge_data = root / "Data/huge_dataset.rds"
+            with huge_data.open("wb") as handle:
+                handle.truncate(1024 * 1024)
+            small = stepwise.migration_preflight(root)["transaction_plan"]
+            with huge_data.open("r+b") as handle:
+                handle.truncate(5 * 1024**4)
+            large = stepwise.migration_preflight(root)["transaction_plan"]
+            self.assertEqual(small, large)
+            self.assertEqual(large["full_project_materialization"], "NO")
+            self.assertEqual(large["unexpected_paths"], [])
+            self.assertEqual(large["paths"], list(stepwise.MIGRATION_WRITE_SET))
+            self.assertLess(
+                large["estimated_staged_regular_file_bytes"],
+                huge_data.stat().st_size,
+            )
+
+    def test_migration_preflight_does_not_descend_into_data_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = self.make_v2_project(Path(temp_dir) / "v2", realistic=True)
+            nested = root / "Data/deep/nested/scientific"
+            nested.mkdir(parents=True)
+            (nested / "artifact.md").write_text("not governance\n", encoding="utf-8")
+            traversed_data_paths: list[Path] = []
+            real_scandir = stepwise.os.scandir
+
+            def scandir_spy(path: object) -> object:
+                candidate = Path(path).resolve()
+                data_root = (root / "Data").resolve()
+                if candidate == data_root or data_root in candidate.parents:
+                    traversed_data_paths.append(candidate)
+                return real_scandir(path)
+
+            with mock.patch.object(stepwise.os, "scandir", side_effect=scandir_spy):
+                inventory = stepwise.migration_preflight(root)
+            self.assertEqual(inventory["state"], stepwise.MIGRATION_REQUIRED)
+            self.assertEqual(traversed_data_paths, [])
+
+    def test_cross_filesystem_exdev_never_materializes_unrelated_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = self.make_v2_project(
+                Path(temp_dir) / "v2", memory_keys=("design",), realistic=True
+            )
+            huge_data = root / "Data/huge_dataset.rds"
+            with huge_data.open("wb") as handle:
+                handle.truncate(5 * 1024**4)
+            payload = {
+                "legacy_memory": [self.migration_record("Memory/design.md")]
+            }
+            copied_files: list[Path] = []
+            copied_trees: list[Path] = []
+            real_copy2 = stepwise.shutil.copy2
+            real_copytree = stepwise.shutil.copytree
+
+            def copy2_spy(source: object, destination: object, *args: object, **kwargs: object) -> object:
+                copied_files.append(Path(source))
+                return real_copy2(source, destination, *args, **kwargs)
+
+            def copytree_spy(source: object, destination: object, *args: object, **kwargs: object) -> object:
+                copied_trees.append(Path(source))
+                return real_copytree(source, destination, *args, **kwargs)
+
+            with (
+                mock.patch.object(
+                    stepwise.os,
+                    "link",
+                    side_effect=OSError(errno.EXDEV, "cross-device link"),
+                ) as link_spy,
+                mock.patch.object(stepwise.shutil, "copy2", side_effect=copy2_spy),
+                mock.patch.object(
+                    stepwise.shutil, "copytree", side_effect=copytree_spy
+                ),
             ):
-                stepwise.ensure_v2_project(root, create=True)
-            self.assertEqual(original, project_file.read_text(encoding="utf-8"))
+                result = stepwise.migration_apply(root, payload)
+            self.assertEqual(result.state, stepwise.PROJECT_V3)
+            link_spy.assert_not_called()
+            for source in [*copied_files, *copied_trees]:
+                try:
+                    relative = source.resolve().relative_to(root)
+                except ValueError:
+                    continue
+                self.assertTrue(
+                    stepwise.path_overlaps_migration_write_set(relative.as_posix()),
+                    f"outside write-set materialized: {relative}",
+                )
+            self.assertNotIn(huge_data, copied_files)
+            self.assertTrue(stepwise.validate_project(root).ok)
+
+    def test_same_filesystem_overlay_contains_only_managed_files_and_references(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            root = self.make_v2_project(base / "v2", realistic=True)
+            candidate = base / "candidate"
+            self.assertEqual(root.stat().st_dev, base.stat().st_dev)
+            with mock.patch.object(stepwise.os, "link", wraps=stepwise.os.link) as link_spy:
+                stepwise.build_migration_overlay(root, candidate)
+            link_spy.assert_not_called()
+            self.assertTrue((candidate / "project.md").is_file())
+            for relative in ("R", "Data", "Results", "Audit"):
+                self.assertTrue((candidate / relative).is_symlink())
+            inspection = stepwise.inspect_migration_overlay(root, candidate)
+            self.assertEqual(inspection["materialized_files"], ["project.md"])
+            self.assertEqual(inspection["unexpected_paths"], [])
+            self.assertEqual(inspection["full_project_materialization"], "NO")
+
+    def test_overlay_candidate_validation_combines_staged_governance_with_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            root = self.make_v2_project(base / "v2", realistic=True)
+            candidate = base / "candidate"
+            preserved = {
+                path: (root / path).read_bytes()
+                for path in (
+                    "R/analysis.R",
+                    "Data/source.csv",
+                    "Results/table1.csv",
+                    "Audit/Runs/model/current/evidence.json",
+                )
+            }
+            stepwise.build_migration_overlay(root, candidate)
+            with stepwise.migration_overlay_view(candidate, root):
+                stepwise.apply_staged_v3_state(candidate, [], [])
+                inspection = stepwise.require_safe_migration_overlay(root, candidate)
+                report = stepwise.validate_project(candidate)
+            self.assertTrue(report.ok, report.errors)
+            self.assertIn(stepwise.V2_SCHEMA_MARKER, (root / "project.md").read_text())
+            self.assertIn(stepwise.SCHEMA_MARKER, (candidate / "project.md").read_text())
+            self.assertTrue((candidate / "R").is_symlink())
+            self.assertEqual(inspection["unexpected_paths"], [])
+            self.assertTrue(
+                all(
+                    stepwise.path_overlaps_migration_write_set(path)
+                    for path in inspection["materialized_files"]
+                )
+            )
+            self.assertEqual(
+                preserved,
+                {path: (root / path).read_bytes() for path in preserved},
+            )
+
+    def test_unsafe_candidate_materialization_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            root = self.make_v2_project(base / "v2")
+            candidate = base / "candidate"
+            stepwise.build_migration_overlay(root, candidate)
+            (candidate / "scratch-copy.bin").write_bytes(b"unexpected")
+            with self.assertRaisesRegex(
+                stepwise.ProjectError,
+                stepwise.MIGRATION_BLOCKED_UNSAFE_STAGING_PLAN,
+            ):
+                stepwise.require_safe_migration_overlay(root, candidate)
+
+    def test_staging_validation_failure_leaves_source_and_no_large_clone(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = self.make_v2_project(
+                Path(temp_dir) / "v2", memory_keys=("design",), realistic=True
+            )
+            huge_data = root / "Data/huge_dataset.rds"
+            with huge_data.open("wb") as handle:
+                handle.truncate(5 * 1024**4)
+            preserved = {
+                path: (root / path).read_bytes()
+                for path in ("R/analysis.R", "Results/table1.csv")
+            }
+            candidates: list[Path] = []
+            staged_inspections: list[dict[str, object]] = []
+            real_builder = stepwise.build_migration_overlay
+
+            def builder(source: Path, destination: Path) -> None:
+                candidates.append(destination)
+                real_builder(source, destination)
+
+            def fail(phase: str) -> None:
+                if phase == "after_stage_validation":
+                    staged_inspections.append(
+                        stepwise.inspect_migration_overlay(root, candidates[0])
+                    )
+                    raise RuntimeError("injected staging validation failure")
+
+            payload = {
+                "legacy_memory": [self.migration_record("Memory/design.md")]
+            }
+            with (
+                mock.patch.object(
+                    stepwise, "build_migration_overlay", side_effect=builder
+                ),
+                self.assertRaisesRegex(RuntimeError, "staging validation failure"),
+            ):
+                stepwise.migration_apply(root, payload, failure_hook=fail)
+            self.assertEqual(len(staged_inspections), 1)
+            self.assertEqual(staged_inspections[0]["unexpected_paths"], [])
+            self.assertNotIn("Data/huge_dataset.rds", staged_inspections[0]["materialized_files"])
+            self.assertFalse(candidates[0].exists())
+            self.assertEqual(huge_data.stat().st_size, 5 * 1024**4)
+            self.assertEqual(
+                preserved,
+                {path: (root / path).read_bytes() for path in preserved},
+            )
+            self.assertEqual(
+                stepwise.detect_project_state(root), stepwise.MIGRATION_REQUIRED
+            )
+
+    def test_dirty_migration_write_set_is_a_recoverable_overlap_blocker(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            project_root = self.make_v2_project(base / "project")
+            self.initialize_git(project_root)
+            project_file = project_root / "project.md"
+            project_file.write_text(
+                project_file.read_text(encoding="utf-8") + "\nHuman note.\n",
+                encoding="utf-8",
+            )
+            project_inventory = stepwise.migration_preflight(project_root)
+            self.assertEqual(
+                project_inventory["state"], stepwise.MIGRATION_BLOCKED_RECOVERABLE
+            )
+            self.assertEqual(
+                project_inventory["dirty_write_set_overlaps"], ["project.md"]
+            )
+            self.assertEqual(
+                project_inventory["recoverable_blockers"][0]["code"],
+                stepwise.MIGRATION_BLOCKED_WORKTREE_OVERLAP,
+            )
+            with self.assertRaisesRegex(stepwise.ProjectError, "recoverable blockers"):
+                stepwise.migration_apply(project_root, {"legacy_memory": []})
+
+            memory_root = self.make_v2_project(
+                base / "memory", memory_keys=("design",)
+            )
+            self.initialize_git(memory_root)
+            memory_file = memory_root / "Memory/design.md"
+            memory_file.write_text(
+                memory_file.read_text(encoding="utf-8") + "\nAdditional rationale.\n",
+                encoding="utf-8",
+            )
+            memory_inventory = stepwise.migration_preflight(memory_root)
+            self.assertEqual(
+                memory_inventory["state"], stepwise.MIGRATION_BLOCKED_RECOVERABLE
+            )
+            self.assertEqual(
+                memory_inventory["dirty_write_set_overlaps"], ["Memory/design.md"]
+            )
+
+    def test_failed_audit_staging_is_recoverable_not_damaged(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = self.make_v2_project(Path(temp_dir) / "v2", realistic=True)
+            failed = root / "Audit/Runs/model/failed-20260820"
+            failed.mkdir()
+            (failed / "partial.json").write_text('{"status":"failed"}\n', encoding="utf-8")
             report = stepwise.validate_project(root)
-            self.assertTrue(any("legacy project" in error for error in report.errors))
+            inventory = stepwise.migration_preflight(root)
+            self.assertEqual(
+                stepwise.detect_project_state(root),
+                stepwise.MIGRATION_BLOCKED_RECOVERABLE,
+            )
+            self.assertEqual(report.state, stepwise.MIGRATION_BLOCKED_RECOVERABLE)
+            self.assertFalse(report.errors)
+            self.assertEqual(inventory["state"], stepwise.MIGRATION_BLOCKED_RECOVERABLE)
+            self.assertFalse(inventory["structural_blockers"])
+            self.assertEqual(
+                inventory["audit_staging_requiring_recovery"][0]["path"],
+                "Audit/Runs/model/failed-20260820",
+            )
+            self.assertEqual(
+                inventory["recoverable_blockers"][0]["code"],
+                "MIGRATION_BLOCKED_AUDIT_STAGING",
+            )
+
+    def test_audit_recover_copies_verifies_manifests_and_preserves_current(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = self.make_v2_project(Path(temp_dir) / "v2", realistic=True)
+            current = root / "Audit/Runs/model/current/evidence.json"
+            current_before = current.read_bytes()
+            failed = root / "Audit/Runs/model/staging-failed"
+            (failed / "nested").mkdir(parents=True)
+            (failed / "partial.json").write_text("partial\n", encoding="utf-8")
+            (failed / "nested/log.txt").write_text("log\n", encoding="utf-8")
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(
+                    stepwise.main(["audit-recover", str(root), "--stage", "model"]),
+                    0,
+                )
+            manifest = json.loads(output.getvalue())
+            destination = Path(manifest["recovery_path"])
+            try:
+                self.assertFalse(failed.exists())
+                self.assertEqual(current.read_bytes(), current_before)
+                self.assertTrue((destination / "staging-failed/partial.json").is_file())
+                manifest_path = destination / "recovery-manifest.json"
+                self.assertTrue(manifest_path.is_file())
+                written = json.loads(manifest_path.read_text(encoding="utf-8"))
+                self.assertEqual(written["file_count"], 2)
+                self.assertEqual(written["stage"], "model")
+                self.assertEqual(destination.parent.name, "model")
+                self.assertEqual(
+                    destination.parent.parent.parent.name,
+                    "stepwise-r-project-recovery",
+                )
+                self.assertNotEqual(root, destination)
+                self.assertEqual(
+                    stepwise.migration_preflight(root)["state"],
+                    stepwise.MIGRATION_REQUIRED,
+                )
+            finally:
+                shutil.rmtree(destination, ignore_errors=True)
+
+    def test_audit_recover_refuses_ambiguous_residue_without_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = self.make_v2_project(Path(temp_dir) / "v2", realistic=True)
+            ambiguous = root / "Audit/Runs/model/candidate-output"
+            ambiguous.mkdir()
+            payload = ambiguous / "only-result.csv"
+            payload.write_text("x\n1\n", encoding="utf-8")
+            before = payload.read_bytes()
+            inventory = stepwise.migration_preflight(root)
+            self.assertEqual(inventory["state"], stepwise.PROJECT_DAMAGED)
+            self.assertTrue(inventory["structural_blockers"])
+            with self.assertRaisesRegex(stepwise.ProjectError, "human review"):
+                stepwise.audit_recover(root, "model")
+            self.assertEqual(payload.read_bytes(), before)
+
+    def test_audit_recovery_failure_preserves_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = self.make_v2_project(Path(temp_dir) / "v2", realistic=True)
+            failed = root / "Audit/Runs/model/incomplete-run"
+            failed.mkdir()
+            payload = failed / "partial.txt"
+            payload.write_text("preserve me\n", encoding="utf-8")
+            before = payload.read_bytes()
+
+            def fail(phase: str) -> None:
+                if phase == "after_verification":
+                    raise RuntimeError("injected recovery failure")
+
+            with self.assertRaisesRegex(RuntimeError, "injected recovery failure"):
+                stepwise.audit_recover(root, "model", failure_hook=fail)
+            self.assertEqual(payload.read_bytes(), before)
+
+    def test_conflicting_canonical_owners_remain_damaged(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = self.make_v2_project(Path(temp_dir) / "v2")
+            (root / "docs/other.md").write_text(
+                "# Other\n\nStatus: frozen\n\nConflicting owner.\n", encoding="utf-8"
+            )
+            project_file = root / "project.md"
+            text = project_file.read_text(encoding="utf-8")
+            duplicate = "| cohort-contract | docs/other.md | - | tests/cohort_contract.R |\n"
+            text = text.replace(stepwise.CANONICAL_END, duplicate + stepwise.CANONICAL_END)
+            project_file.write_text(text, encoding="utf-8")
+            inventory = stepwise.migration_preflight(root)
+            self.assertEqual(inventory["state"], stepwise.PROJECT_DAMAGED)
+            self.assertTrue(
+                any("Duplicate canonical topic" in item for item in inventory["structural_blockers"])
+            )
+
+    def test_migration_requires_explicit_review_for_every_legacy_memory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = self.make_v2_project(
+                Path(temp_dir) / "v2", memory_keys=("first", "second")
+            )
+            payload = {
+                "legacy_memory": [
+                    self.migration_record("Memory/first.md")
+                ]
+            }
+            with self.assertRaisesRegex(stepwise.ProjectError, "unreviewed"):
+                stepwise.migration_apply(root, payload)
+            self.assertEqual(stepwise.detect_project_state(root), stepwise.MIGRATION_REQUIRED)
+
+    def test_zero_memory_migration_creates_fixed_empty_topology(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = self.make_v2_project(
+                Path(temp_dir) / "v2",
+                aliases=("r", "data", "output", "audit"),
+            )
+            result = stepwise.migration_apply(root, {"legacy_memory": []})
+            self.assertEqual(result.reviewed_files, 0)
+            self.assertEqual(list((root / "Memory/entries").glob("*.md")), [])
+            self.assertEqual(list((root / "Attention/entries").glob("*.md")), [])
+            project_text = (root / "project.md").read_text(encoding="utf-8")
+            self.assertIn("| R | r |", project_text)
+            self.assertIn("| Results | output |", project_text)
+            directory_names = {path.name for path in root.iterdir() if path.is_dir()}
+            self.assertNotIn("R", directory_names)
+            self.assertNotIn("Results", directory_names)
+            self.assertTrue(stepwise.validate_project(root).ok)
+
+    def test_semantic_routing_supports_none_decision_attention_both_and_multiple(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            keys = ("none", "decision", "attention", "both", "multiple")
+            root = self.make_v2_project(Path(temp_dir) / "v2", memory_keys=keys)
+            payload = {
+                "legacy_memory": [
+                    self.migration_record("Memory/none.md"),
+                    self.migration_record(
+                        "Memory/decision.md",
+                        decisions=[self.memory_payload("Decision only")],
+                    ),
+                    self.migration_record(
+                        "Memory/attention.md",
+                        attention=[self.attention_payload(title="Attention only")],
+                    ),
+                    self.migration_record(
+                        "Memory/both.md",
+                        decisions=[self.memory_payload("Decision from both")],
+                        attention=[self.attention_payload(title="Attention from both")],
+                    ),
+                    self.migration_record(
+                        "Memory/multiple.md",
+                        decisions=[
+                            self.memory_payload("First distinct decision"),
+                            self.memory_payload("Second distinct decision"),
+                        ],
+                    ),
+                ]
+            }
+            result = stepwise.migration_apply(root, payload)
+            self.assertEqual(result.decision_memories, 4)
+            self.assertEqual(result.attention_entries, 2)
+            self.assertEqual(result.reviewed_files, 5)
+            self.assertEqual(len(list((root / "Memory/entries").glob("M-*.md"))), 4)
+            self.assertEqual(len(list((root / "Attention/entries").glob("A-*.md"))), 2)
+            self.assertTrue(stepwise.validate_project(root).ok)
+
+    def test_mixed_legacy_memory_extracts_events_without_evidence_duplication(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = self.make_v2_project(
+                Path(temp_dir) / "v2", memory_keys=("mixed",), realistic=True
+            )
+            legacy = root / "Memory/mixed.md"
+            legacy.write_text(
+                self.legacy_memory_text("mixed")
+                + "\nBenchmark: 412 seconds.\nPASS: 18 tests.\nProgress: stage 4 complete.\n",
+                encoding="utf-8",
+            )
+            payload = {
+                "legacy_memory": [
+                    self.migration_record(
+                        "Memory/mixed.md",
+                        decisions=[
+                            self.memory_payload("Reject unstable execution architecture"),
+                            self.memory_payload("Adopt reviewer-required estimand"),
+                        ],
+                        attention=[self.attention_payload(title="Choose censoring authority")],
+                    )
+                ]
+            }
+            result = stepwise.migration_apply(root, payload)
+            self.assertEqual(result.decision_memories, 2)
+            self.assertEqual(result.attention_entries, 1)
+            generated = "\n".join(
+                path.read_text(encoding="utf-8")
+                for directory in (root / "Memory/entries", root / "Attention/entries")
+                for path in sorted(directory.glob("*.md"))
+            )
+            self.assertNotIn("412 seconds", generated)
+            self.assertNotIn("18 tests", generated)
+            self.assertNotIn("stage 4 complete", generated)
+            self.assertTrue(stepwise.validate_project(root).ok)
+
+    def test_migration_preserves_unrelated_dirty_bytes_and_git_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = self.make_v2_project(Path(temp_dir) / "v2", realistic=True)
+            self.initialize_git(root)
+            dirty_content = {
+                "R/analysis.R": b"# In-progress analysis\nx <- 42\n",
+                "Results/table1.csv": b"term,value\nage,52\n",
+                "notes.txt": b"collaborator draft\n",
+            }
+            for relative, content in dirty_content.items():
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+            before_git = stepwise.git_migration_status(root)
+            result = stepwise.migration_apply(root, {"legacy_memory": []})
+            after_git = stepwise.git_migration_status(root)
+            self.assertEqual(result.state, stepwise.PROJECT_V3)
+            for relative, content in dirty_content.items():
+                self.assertEqual((root / relative).read_bytes(), content)
+                self.assertEqual(
+                    before_git["path_statuses"][relative],
+                    after_git["path_statuses"][relative],
+                )
+            self.assertTrue(stepwise.validate_project(root).ok)
+
+    def test_v31_end_to_end_recover_preflight_extract_migrate_index_validate(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = self.make_v2_project(
+                Path(temp_dir) / "v2", memory_keys=("mixed",), realistic=True
+            )
+            self.initialize_git(root)
+            failed = root / "Audit/Runs/model/staging-incomplete"
+            failed.mkdir()
+            (failed / "partial.json").write_text("{}\n", encoding="utf-8")
+            blocked = stepwise.migration_preflight(root)
+            self.assertEqual(blocked["state"], stepwise.MIGRATION_BLOCKED_RECOVERABLE)
+            self.assertEqual(
+                blocked["recoverable_blockers"][0]["code"],
+                "MIGRATION_BLOCKED_AUDIT_STAGING",
+            )
+
+            recovery = stepwise.audit_recover(root, "model")
+            destination = Path(recovery["recovery_path"])
+            try:
+                (root / "R/analysis.R").write_text(
+                    "# Authorized ongoing work\nx <- 9\n", encoding="utf-8"
+                )
+                ready = stepwise.migration_preflight(root)
+                self.assertEqual(ready["state"], stepwise.MIGRATION_REQUIRED)
+                self.assertEqual(ready["dirty_write_set_overlaps"], [])
+                self.assertEqual(ready["unrelated_dirty_paths"], ["R/analysis.R"])
+                payload = {
+                    "legacy_memory": [
+                        self.migration_record(
+                            "Memory/mixed.md",
+                            decisions=[
+                                self.memory_payload("Preserve execution architecture rationale"),
+                                self.memory_payload("Preserve estimand rationale"),
+                            ],
+                            attention=[self.attention_payload(title="Resolve material scope")],
+                        )
+                    ]
+                }
+                result = stepwise.migration_apply(root, payload)
+                self.assertEqual(result.decision_memories, 2)
+                self.assertEqual(result.attention_entries, 1)
+                stepwise.refresh_index(root)
+                self.assertTrue(stepwise.validate_project(root).ok)
+            finally:
+                shutil.rmtree(destination, ignore_errors=True)
+
+    def test_skill_documents_v31_memory_and_attention_boundaries(self) -> None:
+        skill_root = Path(__file__).parents[1]
+        skill_text = (skill_root / "SKILL.md").read_text(encoding="utf-8")
+        reference_text = (skill_root / "references/managed-systems.md").read_text(
+            encoding="utf-8"
+        )
+        combined = skill_text + "\n" + reference_text
+        for expected in (
+            "Noteworthy does not mean Attention",
+            "Known pending work",
+            "input container",
+            "never convert a legacy file wholesale",
+            "technical or execution architecture",
+            "never stash the whole project automatically",
+            "audit-recover TARGET --stage STAGE",
+        ):
+            self.assertIn(expected, combined)
+
+    def test_realistic_end_to_end_migration_preserves_scientific_project(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = self.make_v2_project(
+                Path(temp_dir) / "v2",
+                memory_keys=("design", "risk", "routine"),
+                realistic=True,
+            )
+            preserved_paths = (
+                "R/analysis.R",
+                "R/eligibility.R",
+                "Data/source.csv",
+                "Results/table1.csv",
+                "Audit/Runs/model/current/evidence.json",
+                "Audit/Functions/audit_derive_eligibility.Rmd",
+                "docs/cohort.md",
+                "docs/outcome.md",
+                "tests/cohort_contract.R",
+                "tests/outcome_contract.R",
+            )
+            before_files = {path: (root / path).read_bytes() for path in preserved_paths}
+            before_text = (root / "project.md").read_text(encoding="utf-8")
+            before_canonical = stepwise.parse_canonical_entries(before_text)
+            before_results = stepwise.parse_result_entries(before_text)
+            inventory = stepwise.migration_preflight(root)
+            self.assertFalse(inventory["structural_blockers"])
+            payload = {
+                "legacy_memory": [
+                    self.migration_record(
+                        "Memory/design.md",
+                        decisions=[
+                            self.memory_payload(
+                                "Preserve design rationale",
+                                related_topics=["cohort-contract"],
+                            )
+                        ],
+                    ),
+                    self.migration_record(
+                        "Memory/risk.md",
+                        attention=[self.attention_payload()],
+                    ),
+                    self.migration_record("Memory/routine.md"),
+                ]
+            }
+            result = stepwise.migration_apply(root, payload)
+            self.assertEqual(result.state, stepwise.PROJECT_V3)
+            after_files = {path: (root / path).read_bytes() for path in preserved_paths}
+            after_text = (root / "project.md").read_text(encoding="utf-8")
+            self.assertEqual(before_files, after_files)
+            self.assertEqual(before_canonical, stepwise.parse_canonical_entries(after_text))
+            self.assertEqual(before_results, stepwise.parse_result_entries(after_text))
+            self.assertNotIn(stepwise.V2_SCHEMA_MARKER, after_text)
+            self.assertEqual(stepwise.detect_project_state(root), stepwise.PROJECT_V3)
+            stepwise.refresh_index(root)
+            self.assertTrue(stepwise.validate_project(root).ok)
+
+    def test_migration_failure_rolls_back_without_project_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = self.make_v2_project(
+                Path(temp_dir) / "v2", memory_keys=("design",), realistic=True
+            )
+            before = {
+                path.relative_to(root).as_posix(): path.read_bytes()
+                for path in root.rglob("*")
+                if path.is_file()
+            }
+            payload = {
+                "legacy_memory": [
+                    self.migration_record(
+                        "Memory/design.md",
+                        decisions=[self.memory_payload("Rollback decision")],
+                    )
+                ]
+            }
+
+            def fail(phase: str) -> None:
+                if phase == "after_memory_promotion":
+                    raise RuntimeError("injected promotion failure")
+
+            with self.assertRaisesRegex(stepwise.ProjectError, "state restored"):
+                stepwise.migration_apply(root, payload, failure_hook=fail)
+            after = {
+                path.relative_to(root).as_posix(): path.read_bytes()
+                for path in root.rglob("*")
+                if path.is_file()
+            }
+            self.assertEqual(before, after)
+            self.assertEqual(stepwise.detect_project_state(root), stepwise.MIGRATION_REQUIRED)
+            self.assertFalse(
+                any("migration" in path.name.lower() for path in root.iterdir())
+            )
+            self.assertFalse(stepwise.validate_v2_project(root).errors)
+
+    def test_migration_is_idempotent_after_v3_promotion(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = self.make_v2_project(
+                Path(temp_dir) / "v2", memory_keys=("design",)
+            )
+            payload = {
+                "legacy_memory": [
+                    self.migration_record(
+                        "Memory/design.md",
+                        decisions=[self.memory_payload("One decision")],
+                    )
+                ]
+            }
+            first = stepwise.migration_apply(root, payload)
+            before = {
+                path.relative_to(root).as_posix(): path.read_bytes()
+                for path in root.rglob("*")
+                if path.is_file()
+            }
+            second = stepwise.migration_apply(root, payload)
+            after = {
+                path.relative_to(root).as_posix(): path.read_bytes()
+                for path in root.rglob("*")
+                if path.is_file()
+            }
+            self.assertEqual(first.decision_memories, 1)
+            self.assertEqual(second.state, stepwise.PROJECT_V3)
+            self.assertEqual(second.decision_memories, 0)
+            self.assertEqual(before, after)
+
+    def test_migration_cli_separates_check_and_apply_and_removes_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir).resolve()
+            root = self.make_v2_project(base / "v2", memory_keys=("routine",))
+            payload_path = base / "migration.json"
+            payload_path.write_text(
+                json.dumps(
+                    {
+                        "legacy_memory": [
+                            self.migration_record("Memory/routine.md")
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            before = (root / "project.md").read_bytes()
+            self.assertEqual(self.invoke("migrate", str(root), "--check"), 0)
+            self.assertEqual((root / "project.md").read_bytes(), before)
+            self.assertEqual(self.invoke("validate", str(root)), 2)
+            self.assertEqual(
+                self.invoke(
+                    "migrate",
+                    str(root),
+                    "--apply",
+                    "--input",
+                    str(payload_path),
+                ),
+                0,
+            )
+            self.assertFalse(payload_path.exists())
+            self.assertEqual(self.invoke("migrate", str(root), "--check"), 0)
+            self.assertEqual(self.invoke("migrate", str(root), "--apply"), 0)
+            self.assertTrue(stepwise.validate_project(root).ok)
 
     def test_index_refuses_missing_managed_markers(self) -> None:
         project_file = self.root / "project.md"

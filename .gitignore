@@ -10,3 +10,5 @@ __pycache__/
 .quarto/
 *.html
 state/
+/.oppen-project-steward/
+/docs/

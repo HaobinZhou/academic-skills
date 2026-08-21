@@ -1,137 +1,136 @@
 ---
 name: stepwise-r-project
-description: Maintain lean, human-readable R analysis projects with one canonical owner per scientific definition, current publication-facing Results, current-only machine QA, conditional semantic Memory, and audits only for high-risk functions. Use when initializing, modifying, freezing, indexing, or validating an R analysis workspace, or when reviewing existing R code for readable line-by-line RStudio execution.
+description: Maintain strict, human-readable scientific R analysis projects with one canonical owner per definition, current publication-facing Results, current-only Audit evidence, Human Attention escalation, consequential Decision Memory, and audits for high-risk functions. Use when initializing, migrating, modifying, freezing, indexing, or validating an R analysis workspace, or when reviewing R code for readable line-by-line RStudio execution.
 ---
 
 # Stepwise R Project
 
-Keep one current truth for humans. Keep history in Git. Do not create documents merely to prove that work occurred.
+Keep one current truth for humans. Keep artifact history in Git. Use AI discretion for scientific meaning, not project mechanics. If a decision does not require project-specific scientific or semantic context, let the helper make it deterministically.
 
 ## Core Workflow
 
-1. Resolve and inspect the target project before writing. Read `project.md`, existing documentation, R scripts, Results registrations, Audit, relevant tests, and any applicable Memory.
-2. Treat the default budget for new Markdown files as zero. Search the canonical registry and existing documents before proposing a new document.
-3. Run `init` only for a new project or an existing confirmed v2 project. Adopt one existing directory alias per role. Stop on ambiguous aliases.
-4. If `project.md` lacks the v2 marker, run `validate` read-only and report migration needs. Do not initialize over it, append managed blocks, move files, or delete files.
-5. Register one owner for every scientific definition or cross-script contract. Edit that registered file or section in place.
-6. Write readable R code and update the canonical definition, implementation, and contract test together for every semantic change.
-7. Route human deliverables to Results and machine evidence to Audit. Keep failed runs in a temporary location, not in the project.
-8. Create Memory or a Function Audit only when its trigger below is met.
-9. Run relevant tests, refresh `project.md` with `index`, then run `validate`. Do not claim completion while validation fails.
+1. Resolve the target before writing. Inspect `project.md`, relevant canonical sources, R code, Results, Audit, tests, relevant active Attention, and only relevant Decision Memory identified through `Memory/index.md`.
+2. Treat the default budget for new Markdown documents as zero. Search the canonical registry and existing documents first.
+3. Classify the project as v3, migration required, migration blocked but recoverable, unmanaged, or damaged. Run `init` only for a new unmanaged project; never use it as migration.
+4. Resolve one current authority for every scientific definition and cross-script contract. Stop on conflicting owners or ambiguous directory aliases.
+5. Perform the authorized work. For every semantic change, update the canonical definition, R implementation, and contract test together.
+6. Route current human deliverables to Results and machine verification to Audit. Publish only after staging validation and atomic promotion.
+7. Apply the Decision Memory counterfactual test and Human Attention trigger. Do not create either merely because a task ended.
+8. Run relevant R, unit, and registered contract tests; run `index`; then require `validate` to exit zero.
 
-## Project Roles
+## Existing v2 Projects
 
-- `R/` or its adopted alias: human-readable R scripts.
-- `Data/` or its adopted alias: raw and derived machine-readable data, including RDS/RData. Never overwrite raw inputs without explicit authorization.
-- `Results/` or its adopted alias: current publication or formal-review tables, figures, cohort flows, codebooks, and collaborator reports only.
-- `Audit/` or its adopted alias: machine QA, traces, acceptance checks, manifests, session information, diagnostics, and high-risk Function Audits.
-- `Memory/` or an existing `memory/`: optional rationale for semantic contract changes. Create it only on demand.
-- `project.md`: current directory roles, canonical sources, R scripts, current Results, and high-risk Function Audits.
+If the target has a recognized v2 marker, do not run `init` or edit v3 managed state directly. A healthy v2 project is `MIGRATION_REQUIRED`, not an invalid v3 project.
 
-Do not create a standard directory beside an existing synonymous directory. If two directories already claim the same role, stop and ask the user to resolve ownership.
+1. Run `migrate TARGET --check` read-only. Read project status, recoverable and structural blockers, migration write-set, dirty paths and overlaps, legacy Memory, and Audit staging separately.
+2. Treat mechanically clear failed/incomplete Audit staging as `MIGRATION_BLOCKED_RECOVERABLE`, not project damage. Run `audit-recover TARGET --stage STAGE`, confirm the recovery manifest is outside the project, and rerun preflight. Never recover an ambiguous entry automatically.
+3. Require only migration write-set paths (`project.md`, Memory, Attention, and reported helper metadata) to be free of conflicting changes. Unrelated dirty R, Results, or document paths may remain and must stay byte-for-byte and Git-state unchanged; never stash the whole project automatically.
+4. Review every inventoried legacy Memory as an input container, not a migration unit. Extract each qualifying consequential decision independently and apply the Human Attention test separately; never convert a whole file merely because it exists. Ask the human only when genuine scientific ambiguity prevents classification.
+5. Read [managed-systems.md](references/managed-systems.md) and create the complete semantic JSON payload outside the project. Explicitly account for every old file, including files producing no v3 entry.
+6. Run `migrate TARGET --apply --input TEMP_JSON`. Let the helper stage, validate, promote, protect unrelated dirty paths, and roll back; never create migration backups or staging inside the project.
+7. Require the promoted project to pass v3 `index` and `validate` before continuing normal work. Treat rollback failure as a hard blocker.
+
+Preserve adopted R/Data/Results/Audit aliases, canonical topics and owners, verification paths, statuses, Result IDs and files, Function Audits, Audit `current/`, R code, data, and scientific content. Migration upgrades governance state only; it does not rerun analyses or redesign the research project.
+
+Migration transactions stage only the managed migration write set. Never clone, copy, hardlink, or otherwise materialize the full scientific project; unchanged R, Data, Results, Audit current evidence, and other content remain in place and are read only as needed for candidate validation. Cross-filesystem migration is supported, and `EXDEV` must never trigger recursive full-project copying.
+
+For already-v3 projects, `migrate --check` and repeated `--apply` perform no migration. For unmanaged, ambiguous, or damaged projects, do not guess; report the required repair.
+
+## Current-State Ownership
+
+- Canonical answers what the current scientific truth or project contract is.
+- Git answers what files and code changed.
+- Audit holds verification, provenance, diagnostics, and current run state.
+- Attention holds unresolved material issues requiring human awareness or decision.
+- Decision Memory explains why a consequential design decision happened.
+
+Never route verification to Memory, unresolved risk to Memory, decision rationale to Audit, or current definitions to history records.
 
 ## Canonical Ownership
 
-- Register each scientific definition, data definition, variable meaning, or cross-script/output contract under one stable topic key.
-- Use exactly one canonical Markdown, QMD, or Rmd path or section per topic.
-- Search `project.md` and existing documents before creating anything. If the topic exists, update its registered source in place.
-- Treat `frozen` as "current authority", not "immutable file". Revise the same source when the authority changes.
-- Use only `Status: draft`, `Status: partially-frozen`, or `Status: frozen` in the owned document or section.
-- Use `partially-frozen` when some scope remains unresolved, and identify that scope explicitly.
-- Keep `frozen` content free of TODOs, pending decisions, stale counts, `run_id`, PASS/BLOCKED entries, and execution history.
-- Keep run state under Audit and formal findings under Results. Never insert execution ledgers into a canonical protocol.
-- Before changing frozen semantics, set the same source to `draft` or `partially-frozen`; update the definition, implementation, and contract test; run the test; then restore the justified status.
-- Treat the verification path in the registry as a contract, not proof that the test ran. Execute it after every related semantic change.
-- Use `canonical --replace` only for an explicit ownership migration. Resolve the former owner in the same task.
-- If multiple files claim the same current fact or contain conflicting definitions, stop and report the paths. Do not create a third summary or reconciliation document.
-- Never create `_old`, `_new`, `_updated`, `_backup`, dated, versioned, or separate "freeze update" copies. Use Git for history.
-- Treat rendered HTML/PDF as a view or registered Result, never as a second editable source.
+- Register one stable topic key and exactly one Markdown, QMD, or Rmd owner for each scientific definition, variable meaning, or cross-script/output contract.
+- Use only `Status: draft`, `Status: partially-frozen`, or `Status: frozen`. Treat frozen as current authority, not immutable history.
+- Keep frozen content free of unresolved scope, stale counts, execution status, and run history.
+- Before changing frozen semantics, lower the status; revise definition, implementation, and contract test; run the test; then restore the justified status.
+- Treat the registered verification path as a contract to execute, not proof of execution.
+- Use `canonical --replace` only for an explicit ownership migration and resolve the former owner in the same task.
+- Never create `_old`, `_new`, `_updated`, backup, dated, or versioned copies. Revise the current owner and rely on Git.
+- Treat rendered HTML/PDF as a view or registered Result, never a second editable source.
 
 ## R Writing Rules
 
-- Make scripts runnable line by line in RStudio.
-- Use RStudio section headers to separate import, cleaning, analysis, validation, and export blocks.
-- Keep important intermediate objects visible and descriptively named.
-- Keep pipelines short; split scientifically important transformations into named steps.
+- Keep scripts runnable line by line in RStudio with visible packages, paths, seeds, inputs, outputs, and important intermediate objects.
+- Use RStudio section headers for import, cleaning, analysis, validation, and export blocks.
+- Keep scientifically important transformations in short pipelines or named steps.
 - Use concise Chinese comments to explain why control points and transformations exist.
-- Keep package loading, paths, seeds, inputs, and outputs visible.
 - Avoid hidden global state, deeply nested expressions, and whole-analysis wrapper functions.
-- Preserve stable object names when they represent the same concept across scripts.
+- Preserve stable object names when they carry the same meaning across scripts.
 
-## Results And Run Audit
+## Results And Audit
 
-- Retain a file in Results only when a publication reader, reviewer, or collaborator is its direct audience.
-- Register every retained Results file with a stable ID, `kind`, `audience`, and producing R script.
-- Use `kind` values `table`, `figure`, `cohort-flow`, `codebook`, or `report`; use audience `publication` or `formal-review`.
-- Rebuild or overwrite the same registered path when a deliverable changes. Use `result --replace` only when its stable ID intentionally moves to a different path or contract.
-- Permit genuinely different human formats, such as CSV and Markdown, only when each has its own reader-facing use and registration.
-- Never place audit, trace, acceptance, manifest, session, log, status, cache, staging, backup, legacy, invalidated, RDS, or RData artifacts in Results.
-- Put reusable machine data in Data. Put current QA and provenance in `Audit/Runs/<stage>/current/`.
-- Build each run in a stage-specific temporary directory. Do not stream partial outputs into Results or Audit `current`.
-- Run acceptance, schema, provenance, and read-back checks against staging.
-- After all checks pass, replace the whole `Audit/Runs/<stage>/current/` directory as one promotion. Do not merge new files into an old `current` tree.
-- Publish and register Results only after successful Audit promotion.
-- On failure, leave the prior `current` untouched. Keep diagnostics in the system temporary directory only, and report that path or the relevant diagnostics in the response.
-- Remove transient staging before normal handoff. Any historical, dated, or staging sibling beside `current` makes the project invalid.
+- Retain only publication or formal-review tables, figures, cohort flows, codebooks, and reports in Results. Register each with a stable ID, kind, audience, and producing R script.
+- Rebuild the same registered path when a deliverable changes. Use `result --replace` only for an intentional contract move.
+- Put reusable machine data in Data. Put QA, provenance, manifests, diagnostics, traces, and session state in Audit.
+- Build run output in a stage-specific system temporary directory. Validate schema, provenance, acceptance, and read-back there.
+- Atomically replace the whole `Audit/Runs/<stage>/current/` tree only after checks pass. Publish Results afterward.
+- Leave the prior `current/` untouched on failure. Keep no persistent staging, dated, historical, or backup sibling.
 
-## Memory Trigger
+## Human Attention
 
-Create or update Memory only when at least one of these semantics changes:
+Raise Attention only when a concern is material, unresolved, outside ordinary authorized work, requires added authorization/scientific judgment/substantial scope, has concrete evidence, and has no equivalent active entry. Raising an issue never grants authority to resolve it.
 
-- data inclusion, derivation, or source definition;
-- analysis logic or scientific assumption;
-- variable meaning;
-- output contract;
-- cross-script interface.
+Noteworthy does not mean Attention. Known pending work is not Attention when no new human decision is required, current Canonical/Audit state already represents it, and an authorized workflow already contains its resolution.
 
-Do not create Memory for comments, formatting, equivalent refactors, test additions, index refreshes, pure reruns, unchanged numerical results, or presentation-only revisions.
+Use `blocking: true` when the issue could materially undermine analysis correctness or interpretation, including eligibility, time zero, exposure, outcomes, joins, missingness, censoring, weighting, models, inference, denominators, provenance, or reported numbers. Do not claim the affected analysis complete while such an issue remains unresolved.
 
-- Register the related canonical topic before creating Memory.
-- Use one stable `Memory/<task-key>.md` per scientific or technical contract. Reuse it across sessions.
-- Update that file in place. Never use dates, magnitude labels, or `-2`/`-3` suffixes.
-- Keep the current full definition in the canonical source, not in Memory.
-- Record only the durable reason for change, canonical link, verification, and remaining risk.
-- Record completed verification commands and outcomes, not instructions for a future run.
-- Complete every generated placeholder before validation.
-- Do not index every Memory file in `project.md`.
+Do not use Attention for formatting, naming, package upgrades, routine refactoring, generic debt, or speculative improvements. Read [managed-systems.md](references/managed-systems.md) before raising or resolving an entry.
+
+## Decision Memory
+
+Create Decision Memory only when a consequential scientific or technical decision passes this test:
+
+> Without an explicit record, could a future AI with the current project and Git history plausibly fail to explain why the decision was made, or unknowingly reintroduce a rejected approach?
+
+Valid events preserve non-obvious causal history such as failed prior designs, diagnostic-driven strategy changes, collaborator/reviewer requirements, data-imposed compromises, or deliberately rejected credible methods. Prefer the pattern: previously X; observed Y; therefore decided Z.
+
+Consequential technical or execution architecture also qualifies when its causal rationale is durable and cannot be reconstructed from current code, Canonical, and Git. For example: the project previously used one execution architecture; real resource behavior made it unsafe at project scale; the project therefore changed storage, concurrency, worker memory, or spill policy; future maintainers should not restore the former design without new evidence.
+
+Do not record routine bugs, package compatibility fixes, ordinary normalization, local optimization, refactors, tests, reruns, commands, file lists, benchmarks, progress/status summaries, unchanged results, information already in Canonical or Git, Audit evidence, or unresolved concerns unless they caused a durable consequential design decision whose rationale would otherwise be lost. A task ending is never a trigger. `related_topics: []` is valid. Read [managed-systems.md](references/managed-systems.md) before adding an entry or declaring relationships.
 
 ## Function Policy
 
-- Do not create functions preemptively. Use them for genuine reuse or meaningfully error-prone repeated logic.
-- Give every function Roxygen documentation and executable tests.
-- Create a Function Audit only when an error could alter eligibility, time windows, key joins/deduplication, exposure/strategy, outcomes, missingness/imputation, censoring, weighting/modeling, aggregation/denominators, or a cross-script/output contract.
-- Require only Roxygen and tests for formatting, paths, labels, display helpers, and other low-risk utilities.
-- Keep one stable `Audit/Functions/audit_<function>.Rmd` per high-risk function.
-- Update the same Rmd whenever relevant source behavior changes. Update its `source_sha256` after reviewing the current source.
-- Record purpose and risk, input/output contract, edge cases and executable tests, and known limits.
-- Do not retain rendered Function Audit HTML.
-- Treat `UPDATE_REQUIRED` as an instruction to edit the returned existing Rmd, not permission to create another audit.
+- Create functions only for genuine reuse or meaningfully error-prone repeated logic. Give every function Roxygen documentation and executable tests.
+- Create a Function Audit when an error could alter eligibility, time windows, joins/deduplication, exposure, outcomes, missingness, censoring, weighting/modeling, aggregation/denominators, or a cross-script/output contract.
+- Keep one `Audit/Functions/audit_<function>.Rmd` per high-risk function. Update it in place with its source hash, purpose/risk, contract, edge cases/tests, and known limits.
+- Do not retain rendered Function Audit HTML. Treat `UPDATE_REQUIRED` as an instruction to update the returned Rmd.
 
 ## Helper Commands
 
-Run the bundled `scripts/stepwise_r_project.py` with its absolute Skill path:
+Run `scripts/stepwise_r_project.py` using its absolute skill path:
 
 ```text
 init TARGET
+migrate TARGET --check
+migrate TARGET --apply --input TEMP_JSON
+audit-recover TARGET --stage STAGE
 canonical TARGET --topic KEY --path PATH [--section HEADING] --verification TEST_PATH [--replace]
 result TARGET --id KEY --path PATH --kind KIND --audience AUDIENCE --producer PATH [--replace]
-memory TARGET --task-key KEY --summary TEXT --canonical-topic TOPIC
+attention raise TARGET --input TEMP_JSON
+attention resolve TARGET --id A-XXXX
+memory add TARGET --input TEMP_JSON
 function-audit TARGET --function NAME --source PATH --risk-reason TEXT
 index TARGET
 validate TARGET
 ```
 
-- Expect these commands to be idempotent for unchanged inputs.
-- Do not use the removed `--magnitude` interface.
-- Do not use `init` as a migration command.
-- Use `index` only on a v2 `project.md` with intact managed markers. Resolve legacy or duplicate sections explicitly.
+Let the helper own IDs, paths, fixed schemas, indices, relationships, lifecycle mechanics, and atomic writes. Never hand-edit managed indices or relationship reverse links.
 
 ## Completion Gate
 
-1. Run relevant R tests, unit tests, and every contract test linked to changed canonical topics.
-2. Confirm no second current definition, stale frozen content, or parallel old/versioned document exists.
-3. Confirm Results contains only registered current human deliverables.
-4. Confirm each Audit run stage contains at most one `current/` tree and no persistent staging or historical siblings.
-5. Complete any Memory or Function Audit that was actually triggered.
+1. Run relevant R/unit tests and every contract test linked to changed canonical topics.
+2. Confirm no second current definition, stale frozen content, parallel old/versioned document, unregistered Result, or invalid Audit run tree remains.
+3. Complete any triggered Function Audit. Evaluate Decision Memory and Attention explicitly; "none required" is normal.
+4. Do not claim an affected analysis complete while a relevant blocking Attention undermines correctness.
+5. Require Memory and Attention indices to match entries and no legacy/alternative managed topology to remain.
 6. Run `index`, then require `validate` to exit zero.
-7. Report current deliverables, verification performed, and unresolved blockers. Mention Memory or Function Audit only when one was genuinely required.
+7. Report current deliverables, verification, migration behavior when applicable, and unresolved blockers.

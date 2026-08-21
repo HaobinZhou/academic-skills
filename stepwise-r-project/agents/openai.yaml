@@ -1,4 +1,4 @@
 interface:
   display_name: "Stepwise R Project"
-  short_description: "Lean R projects with canonical outputs"
-  default_prompt: "Use $stepwise-r-project to maintain this R analysis workspace with canonical documents, human-facing Results, and current-only audits."
+  short_description: "Scientific R governance with Attention and Memory"
+  default_prompt: "Use $stepwise-r-project to maintain this scientific R workspace with canonical ownership, Human Attention, Decision Memory, and strict validation."

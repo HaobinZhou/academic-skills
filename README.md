@@ -6,6 +6,12 @@ These skills are not demo artifacts. They are used in real research and learning
 
 ## Skill Categories
 
+### Long-Lived Project Governance
+
+| Skill | Description |
+| --- | --- |
+| `oppen-project-steward` | Governance for long-lived non-scientific AI-assisted projects. Canonical states current truth, Git owns artifact history, Audit holds current machine evidence, Human Attention surfaces material unresolved concerns, and Decision Memory preserves consequential rationale. It is independent from `stepwise-r-project`. |
+
 ### Research Computing and Analysis Governance
 
 | Skill | Description |
@@ -33,6 +39,12 @@ These skills are not demo artifacts. They are used in real research and learning
 这些 skill 不是展示用的 demo，而是我每天在真实科研和学习工作中使用的工具。我希望它们也能帮助更多科研人员建立可读、可审计、也更符合人性节奏的学术工作流。
 
 ## 技能大类
+
+### 长期项目治理
+
+| Skill | 说明 |
+| --- | --- |
+| `oppen-project-steward` | 面向长期、非科研型 AI 协作项目的治理工具。Canonical 表达当前事实，Git 保存产物历史，Audit 保存当前机器验证证据，Human Attention 暴露需要人类知晓或决策的重大未决问题，Decision Memory 保留重要决策的因果背景。它与 `stepwise-r-project` 相互独立。 |
 
 ### 科研计算与分析治理
 

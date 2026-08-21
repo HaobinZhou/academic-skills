@@ -1,0 +1,4 @@
+interface:
+  display_name: "Oppen Project Steward"
+  short_description: "Adopt and govern durable projects without restructuring them"
+  default_prompt: "Use $oppen-project-steward to classify, adopt or govern this durable project while preserving its existing structure and unrelated dirty work."
